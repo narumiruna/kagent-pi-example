@@ -1,0 +1,63 @@
+# Render the three ${...} placeholders before applying. The Secret and
+# WorkerPool must already exist in the kagent namespace.
+apiVersion: kagent.dev/v1alpha3
+kind: Harness
+metadata:
+  name: pi-agent
+  namespace: kagent
+spec:
+  byo: {}
+  workload:
+    image: ${PI_AGENT_IMAGE}
+    # Substrate does not use the image entrypoint/CMD.
+    command: ["/usr/local/bin/node"]
+    args: ["/app/dist/src/index.js"]
+  env:
+    - name: PI_DATA_DIR
+      value: /data
+    - name: PI_GRPC_ADDRESS
+      value: "0.0.0.0:80"
+    - name: PI_HEALTH_HOST
+      value: "0.0.0.0"
+    - name: PI_MODEL_PROVIDER
+      value: anthropic
+    - name: PI_MODEL_ID
+      value: claude-sonnet-4-5
+    - name: ANTHROPIC_API_KEY
+      credentialRef:
+        name: pi-agent-anthropic
+        key: ANTHROPIC_API_KEY
+  substrate:
+    workerPoolRef:
+      name: ${PI_WORKER_POOL}
+    snapshotPolicy:
+      location: ${PI_SNAPSHOT_LOCATION}
+  allowedAgentTemplates:
+    selector:
+      matchLabels:
+        samples.kagent.dev/runtime: pi-agent
+---
+# Gives the compiler the provider destination needed for runtime egress.
+# Keep this in sync with PI_MODEL_PROVIDER / PI_MODEL_ID above.
+apiVersion: kagent.dev/v1alpha3
+kind: ModelConfig
+metadata:
+  name: pi-agent-model
+  namespace: kagent
+spec:
+  provider: Anthropic
+  model: claude-sonnet-4-5
+  apiKeySecret: pi-agent-anthropic
+  apiKeySecretKey: ANTHROPIC_API_KEY
+---
+apiVersion: kagent.dev/v1alpha3
+kind: AgentTemplate
+metadata:
+  name: pi-agent
+  namespace: kagent
+  labels:
+    samples.kagent.dev/runtime: pi-agent
+spec:
+  description: Pi coding agent with read, write, edit, and bash tools
+  modelConfig:
+    name: pi-agent-model

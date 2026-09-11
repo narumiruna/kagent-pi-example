@@ -1,0 +1,29 @@
+{
+  "name": "kagent-pi-agent-sample",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22.19.0"
+  },
+  "scripts": {
+    "start": "node dist/src/index.js",
+    "dev": "tsx src/index.ts",
+    "build": "tsc -p tsconfig.build.json",
+    "format": "biome format --write .",
+    "check": "biome check . && tsc --noEmit",
+    "test": "tsx --test tests/*.test.ts"
+  },
+  "dependencies": {
+    "@a2a-js/sdk": "1.1.0",
+    "@bufbuild/protobuf": "2.12.1",
+    "@earendil-works/pi-coding-agent": "0.85.1",
+    "@grpc/grpc-js": "1.14.4"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "2.5.13",
+    "@types/node": "22.20.2",
+    "tsx": "4.23.13",
+    "typescript": "6.0.2"
+  }
+}
