@@ -1,4 +1,4 @@
-import { mkdir } from "node:fs/promises";
+import { mkdir, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import {
   createAgentSession,
@@ -17,10 +17,30 @@ const agentDir = resolve(process.env.PI_CODING_AGENT_DIR ?? join(dataDir, "agent
 const sessionDir = join(dataDir, "sessions");
 await Promise.all([cwd, agentDir, sessionDir].map((directory) => mkdir(directory, { recursive: true })));
 
-const provider = process.env.PI_MODEL_PROVIDER ?? "anthropic";
-const modelId = process.env.PI_MODEL_ID ?? "claude-sonnet-4-5";
+const authPath = join(agentDir, "auth.json");
+const injectedAuth = process.env.PI_CODING_AGENT_AUTH_JSON;
+delete process.env.PI_CODING_AGENT_AUTH_JSON;
+if (injectedAuth) {
+  try {
+    const parsed = JSON.parse(injectedAuth);
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("expected a JSON object");
+  } catch (error) {
+    throw new Error("Invalid PI_CODING_AGENT_AUTH_JSON", { cause: error });
+  }
+  try {
+    // Do not replace a checkpointed file: pi may have persisted refreshed OAuth tokens.
+    await writeFile(authPath, injectedAuth, { encoding: "utf8", mode: 0o600, flag: "wx" });
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+  }
+}
+
+const settingsManager = SettingsManager.create(cwd, agentDir, { projectTrusted: false });
+settingsManager.applyOverrides({ enableInstallTelemetry: false });
+const provider = process.env.PI_MODEL_PROVIDER ?? settingsManager.getDefaultProvider() ?? "anthropic";
+const modelId = process.env.PI_MODEL_ID ?? settingsManager.getDefaultModel() ?? "claude-sonnet-4-5";
 const modelRuntime = await ModelRuntime.create({
-  authPath: join(agentDir, "auth.json"),
+  authPath,
   modelsPath: null,
   modelsStorePath: join(agentDir, "models-store.json"),
   allowModelNetwork: false,
@@ -31,12 +51,11 @@ if (!(await modelRuntime.getAuth(model))) throw new Error(`No credentials config
 
 const healthPort = Number(process.env.PI_HEALTH_PORT ?? "8081");
 if (!Number.isInteger(healthPort) || healthPort < 1 || healthPort > 65535) throw new Error("Invalid PI_HEALTH_PORT");
-const settingsManager = SettingsManager.inMemory({ enableInstallTelemetry: false });
 const resourceOptions = {
   cwd,
   agentDir,
   settingsManager,
-  // A remotely editable workspace must not autoload executable extensions or settings.
+  // A remotely editable workspace must not autoload executable extensions or project settings.
   noExtensions: true,
   noSkills: true,
   noPromptTemplates: true,

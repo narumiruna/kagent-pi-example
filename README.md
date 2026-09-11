@@ -36,10 +36,8 @@ npm run format
 npm run check
 npm test
 
-# Set ANTHROPIC_API_KEY in your environment first.
-npm run dev
-
-# Or use credentials from this checkout's ignored .pi/agent/auth.json.
+# Use credentials, model defaults, and thinking defaults from this checkout's
+# ignored .pi/agent directory.
 PI_CODING_AGENT_DIR="$PWD/.pi/agent" npm run dev
 ```
 
@@ -67,7 +65,12 @@ Requires kagent with the BYO compiler, Substrate, a same-namespace WorkerPool, s
    docker push ghcr.io/YOUR_ORG/pi-agent:demo
    ```
 
-2. Provision a Secret named `pi-agent-anthropic` in namespace `kagent` with an `ANTHROPIC_API_KEY` key, using your normal secret-management workflow. Do not put credentials in the manifest or image.
+2. Provision a Secret named `pi-agent-openai-codex` in namespace `kagent` from your pi OAuth credentials, using your normal secret-management workflow. Do not put credentials in the manifest or image. For a local test cluster:
+
+   ```sh
+   kubectl -n kagent create secret generic pi-agent-openai-codex \
+     --from-file=auth.json=.pi/agent/auth.json
+   ```
 
 3. Set the image **digest**, WorkerPool name, and snapshot location for your installation, then render `deploy.yaml` using `envsubst`:
 
@@ -90,23 +93,23 @@ Requires kagent with the BYO compiler, Substrate, a same-namespace WorkerPool, s
      --task 'Create hello.txt containing hello.'
    ```
 
-The container serves A2A gRPC on port **80**, readiness on **8081**, and keeps workspace, pi conversation, and pi configuration under **`/data`**. The ModelConfig declares the provider destination for compiled egress; keep it aligned with pi's provider/model settings. This sample does not declare destinations for arbitrary network commands run by the model.
+The container serves A2A gRPC on port **80**, readiness on **8081**, and keeps workspace, pi conversation, and pi configuration under **`/data`**. The ModelConfig declares `chatgpt.com` as the model destination for compiled egress; OpenAI Codex OAuth token refresh also requires `auth.openai.com`, which must be allowed by the target compiler/egress policy. This sample does not declare destinations for arbitrary network commands run by the model.
 
 ## Configuration
 
 | Environment variable | Local default | Purpose |
 | --- | --- | --- |
-| `PI_MODEL_PROVIDER` | `anthropic` | pi provider ID |
-| `PI_MODEL_ID` | `claude-sonnet-4-5` | pi model ID |
-| `ANTHROPIC_API_KEY` | Required for default provider | Provider credential; other providers use their own pi-supported environment variables |
+| `PI_MODEL_PROVIDER` | `settings.json`, then `anthropic` | pi provider ID; deployment uses `openai-codex` |
+| `PI_MODEL_ID` | `settings.json`, then `claude-sonnet-4-5` | pi model ID; deployment uses `gpt-5.6-sol` |
+| `PI_CODING_AGENT_AUTH_JSON` | Unset | Optional Secret-injected `auth.json`; initializes the agent directory without replacing refreshed credentials |
 | `PI_DATA_DIR` | `.data` | Private workspace and session root; also contains the default `agent/` directory; container uses `/data` |
-| `PI_CODING_AGENT_DIR` | `<PI_DATA_DIR>/agent` | pi agent directory used for `auth.json` and `models-store.json`; set to `$PWD/.pi/agent` to reuse a local pi login |
+| `PI_CODING_AGENT_DIR` | `<PI_DATA_DIR>/agent` | pi agent directory used for `auth.json`, `settings.json`, and `models-store.json`; set to `$PWD/.pi/agent` to reuse local pi configuration |
 | `PI_GRPC_ADDRESS` | `127.0.0.1:8080` | Local bind address; container uses `0.0.0.0:80` |
 | `PI_HEALTH_HOST` | `127.0.0.1` | Local readiness bind host; container uses `0.0.0.0` |
 | `PI_HEALTH_PORT` | `8081` | Local readiness port; keep 8081 in Substrate |
 | `KAGENT_AGENT_CARD_JSON` | Minimal sample card | Generated card supplied by kagent |
 
-The sample deliberately **ignores `KAGENT_CONFIG_JSON`**. AgentTemplate prompts, MCP tools, skills, plugins, and model settings are not translated into pi configuration. pi uses its built-in coding prompt/tools and explicit provider environment settings. `PI_CODING_AGENT_DIR` supplies credentials and the cached model catalog, but this service does not load its `settings.json`; set `PI_MODEL_PROVIDER` and `PI_MODEL_ID` explicitly when they differ from the defaults. Workspace-local extensions, settings, skills, prompt templates, and context files are not automatically loaded. Remote text is not expanded as pi slash commands.
+The sample deliberately **ignores `KAGENT_CONFIG_JSON`**. AgentTemplate prompts, MCP tools, skills, plugins, and model settings are not translated into pi configuration. pi uses its built-in coding prompt/tools, global settings from `PI_CODING_AGENT_DIR`, and explicit provider environment overrides. Executable extensions, skills, prompt templates, themes, project settings, and context files are not automatically loaded. Remote text is not expanded as pi slash commands.
 
 ## Semantics and limits
 

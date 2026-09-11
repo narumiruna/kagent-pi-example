@@ -22,13 +22,13 @@ spec:
     - name: PI_HEALTH_HOST
       value: "0.0.0.0"
     - name: PI_MODEL_PROVIDER
-      value: anthropic
+      value: openai-codex
     - name: PI_MODEL_ID
-      value: claude-sonnet-4-5
-    - name: ANTHROPIC_API_KEY
+      value: gpt-5.6-sol
+    - name: PI_CODING_AGENT_AUTH_JSON
       credentialRef:
-        name: pi-agent-anthropic
-        key: ANTHROPIC_API_KEY
+        name: pi-agent-openai-codex
+        key: auth.json
   substrate:
     workerPoolRef:
       name: ${PI_WORKER_POOL}
@@ -47,10 +47,12 @@ metadata:
   name: pi-agent-model
   namespace: kagent
 spec:
-  provider: Anthropic
-  model: claude-sonnet-4-5
-  apiKeySecret: pi-agent-anthropic
-  apiKeySecretKey: ANTHROPIC_API_KEY
+  # kagent calls this provider OpenAI; pi's corresponding provider ID is openai-codex.
+  provider: OpenAI
+  model: gpt-5.6-sol
+  openAI:
+    baseUrl: https://chatgpt.com/backend-api
+    apiFormat: responses
 ---
 apiVersion: kagent.dev/v1alpha3
 kind: AgentTemplate
