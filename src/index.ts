@@ -19,7 +19,9 @@ await Promise.all([cwd, agentDir, sessionDir].map((directory) => mkdir(directory
 
 const authPath = join(agentDir, "auth.json");
 const injectedAuth = process.env.PI_CODING_AGENT_AUTH_JSON;
+const injectedSettings = process.env.PI_CODING_AGENT_SETTINGS_JSON;
 delete process.env.PI_CODING_AGENT_AUTH_JSON;
+delete process.env.PI_CODING_AGENT_SETTINGS_JSON;
 if (injectedAuth) {
   try {
     const parsed = JSON.parse(injectedAuth);
@@ -33,6 +35,16 @@ if (injectedAuth) {
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
   }
+}
+if (injectedSettings) {
+  try {
+    const parsed = JSON.parse(injectedSettings);
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("expected a JSON object");
+  } catch (error) {
+    throw new Error("Invalid PI_CODING_AGENT_SETTINGS_JSON", { cause: error });
+  }
+  // Settings are non-secret deployment configuration and remain declarative.
+  await writeFile(join(agentDir, "settings.json"), injectedSettings, { encoding: "utf8", mode: 0o600 });
 }
 
 const settingsManager = SettingsManager.create(cwd, agentDir, { projectTrusted: false });
@@ -51,6 +63,10 @@ if (!(await modelRuntime.getAuth(model))) throw new Error(`No credentials config
 
 const healthPort = Number(process.env.PI_HEALTH_PORT ?? "8081");
 if (!Number.isInteger(healthPort) || healthPort < 1 || healthPort > 65535) throw new Error("Invalid PI_HEALTH_PORT");
+const httpPort = process.env.PI_HTTP_PORT === undefined ? undefined : Number(process.env.PI_HTTP_PORT);
+if (httpPort !== undefined && (!Number.isInteger(httpPort) || httpPort < 1 || httpPort > 65535)) {
+  throw new Error("Invalid PI_HTTP_PORT");
+}
 const resourceOptions = {
   cwd,
   agentDir,
@@ -83,6 +99,8 @@ const loader = new DefaultResourceLoader({
       grpcAddress: process.env.PI_GRPC_ADDRESS ?? "127.0.0.1:8080",
       healthHost: process.env.PI_HEALTH_HOST ?? "127.0.0.1",
       healthPort,
+      httpHost: process.env.PI_HTTP_HOST,
+      httpPort,
       card: agentCard(process.env.KAGENT_AGENT_CARD_JSON),
     }),
   ],

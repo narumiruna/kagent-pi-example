@@ -1,8 +1,11 @@
+import { randomUUID } from "node:crypto";
 import { once } from "node:events";
 import { createServer } from "node:http";
-import { AgentCard } from "@a2a-js/sdk";
-import { A2AService, grpcService, UserBuilder } from "@a2a-js/sdk/server/grpc";
+import { AgentCard, AgentInterface } from "@a2a-js/sdk";
+import { agentCardHandler, UserBuilder as HttpUserBuilder, jsonRpcHandler } from "@a2a-js/sdk/server/express";
+import { A2AService, UserBuilder as GrpcUserBuilder, grpcService } from "@a2a-js/sdk/server/grpc";
 import { Server, ServerCredentials } from "@grpc/grpc-js";
+import express from "express";
 import { PiExecutor, type PiSession } from "./executor.js";
 import { KagentRequestHandler } from "./request-handler.js";
 
@@ -10,6 +13,8 @@ export type ServerOptions = {
   grpcAddress: string;
   healthHost: string;
   healthPort: number;
+  httpHost?: string;
+  httpPort?: number;
   card: AgentCard;
 };
 
@@ -37,15 +42,64 @@ export function agentCard(json?: string): AgentCard {
 
 export async function startServer(session: PiSession, options: ServerOptions) {
   const executor = new PiExecutor(session);
+  const card = AgentCard.fromJSON(AgentCard.toJSON(options.card));
+  if (options.httpPort !== undefined) {
+    for (const protocolVersion of ["1.0", "0.3"]) {
+      if (
+        !card.supportedInterfaces.some(
+          (item) => item.protocolBinding === "JSONRPC" && item.protocolVersion === protocolVersion,
+        )
+      ) {
+        card.supportedInterfaces.push(
+          AgentInterface.fromJSON({
+            url: `http://${options.httpHost ?? "127.0.0.1"}:${options.httpPort}`,
+            protocolBinding: "JSONRPC",
+            protocolVersion,
+          }),
+        );
+      }
+    }
+  }
+  const requestHandler = new KagentRequestHandler(card, executor);
   const grpc = new Server();
   grpc.addService(
     A2AService,
     grpcService({
-      requestHandler: new KagentRequestHandler(options.card, executor),
-      // This is private Actor ingress. kagent owns public authentication and authorization.
-      userBuilder: UserBuilder.noAuthentication,
+      requestHandler,
+      // These are private kagent ingress endpoints; kagent owns public authentication.
+      userBuilder: GrpcUserBuilder.noAuthentication,
     }),
   );
+  const http =
+    options.httpPort === undefined
+      ? undefined
+      : createServer(
+          express()
+            .use(express.json())
+            .use((request, _response, next) => {
+              // kagent 0.10 may omit the v0.3 message ID; the compatibility
+              // decoder requires one before DefaultRequestHandler can allocate a task.
+              const body = request.body as { method?: string; params?: { message?: Record<string, unknown> } };
+              if (body?.method?.startsWith("message/") && body.params?.message) {
+                if (!body.params.message.messageId) body.params.message.messageId = randomUUID();
+                // A legacy Deployment serves one durable pi conversation, so
+                // requests without a kagent session share one stable context.
+                if (!body.params.message.contextId) body.params.message.contextId = "legacy-default";
+              }
+              next();
+            })
+            .use(
+              "/.well-known/agent-card.json",
+              agentCardHandler({ agentCardProvider: requestHandler, legacyCompat: { enabled: true } }),
+            )
+            .use(
+              jsonRpcHandler({
+                requestHandler,
+                userBuilder: HttpUserBuilder.noAuthentication,
+                legacyCompat: { enabled: true },
+              }),
+            ),
+        );
   let ready = false;
   const health = createServer((request, response) => {
     if (request.method !== "GET" || request.url !== "/readyz") {
@@ -61,14 +115,18 @@ export async function startServer(session: PiSession, options: ServerOptions) {
       );
     });
     health.listen(options.healthPort, options.healthHost);
-    await once(health, "listening");
+    if (http) http.listen(options.httpPort, options.httpHost ?? "127.0.0.1");
+    await Promise.all([once(health, "listening"), ...(http ? [once(http, "listening")] : [])]);
     ready = true;
     const healthAddress = health.address();
+    const httpAddress = http?.address();
     if (!healthAddress || typeof healthAddress === "string") throw new Error("Missing readiness address.");
+    if (http && (!httpAddress || typeof httpAddress === "string")) throw new Error("Missing HTTP address.");
     let stopping: Promise<void> | undefined;
     return {
       grpcPort,
       healthPort: healthAddress.port,
+      httpPort: httpAddress && typeof httpAddress !== "string" ? httpAddress.port : undefined,
       close(): Promise<void> {
         stopping ??= (async () => {
           ready = false;
@@ -84,6 +142,9 @@ export async function startServer(session: PiSession, options: ServerOptions) {
             await Promise.all([
               new Promise<void>((resolve, reject) => grpc.tryShutdown((error) => (error ? reject(error) : resolve()))),
               new Promise<void>((resolve, reject) => health.close((error) => (error ? reject(error) : resolve()))),
+              ...(http
+                ? [new Promise<void>((resolve, reject) => http.close((error) => (error ? reject(error) : resolve())))]
+                : []),
             ]);
             clearTimeout(timeout);
           }
@@ -94,6 +155,7 @@ export async function startServer(session: PiSession, options: ServerOptions) {
   } catch (error) {
     grpc.forceShutdown();
     health.close();
+    http?.close();
     throw error;
   }
 }

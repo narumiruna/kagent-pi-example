@@ -18,10 +18,12 @@
     "@a2a-js/sdk": "1.1.0",
     "@bufbuild/protobuf": "2.12.1",
     "@earendil-works/pi-coding-agent": "0.85.1",
-    "@grpc/grpc-js": "1.14.4"
+    "@grpc/grpc-js": "1.14.4",
+    "express": "5.1.0"
   },
   "devDependencies": {
     "@biomejs/biome": "2.5.13",
+    "@types/express": "5.0.3",
     "@types/node": "22.20.2",
     "tsx": "4.23.13",
     "typescript": "6.0.2"

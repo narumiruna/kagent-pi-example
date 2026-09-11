@@ -1,6 +1,6 @@
 # Pi coding agent on kagent
 
-A TypeScript BYO runtime using pi's SDK and an A2A gRPC pi extension. It targets this repository's `kagent.dev/v1alpha3` API, not legacy `Agent` deployments.
+A TypeScript BYO runtime using pi's SDK and an A2A pi extension. It supports both the `kagent.dev/v1alpha3` BYO Harness API over gRPC and legacy kagent 0.10.x `Agent` deployments over A2A v0.3 JSON-RPC.
 
 ```mermaid
 flowchart LR
@@ -15,7 +15,7 @@ flowchart LR
 
 - `src/index.ts`: headless SDK host, model selection, durable pi session, process shutdown.
 - `extensions/a2a.ts`: starts the server on `session_start` and closes it on `session_shutdown`.
-- `src/server.ts`: upstream A2A gRPC transport and HTTP readiness.
+- `src/server.ts`: A2A gRPC transport, optional HTTP JSON-RPC compatibility transport, agent card, and readiness.
 - `src/request-handler.ts`: adapts kagent-preallocated task IDs to the upstream JS request handler.
 - `src/executor.ts`: maps pi execution to upstream A2A tasks, status updates, artifacts, and cancellation.
 - `src/conversation.ts`: opens a fresh execution session from durable pi history for each prompt.
@@ -41,7 +41,7 @@ npm test
 PI_CODING_AGENT_DIR="$PWD/.pi/agent" npm run dev
 ```
 
-Local defaults bind gRPC to `127.0.0.1:8080` and readiness to `127.0.0.1:8081/readyz`. The workspace and pi session live in `.data/`, not your repository checkout. Each request resumes the most recent pi session in that directory, including after a process restart. `PI_CODING_AGENT_DIR` may point pi's credential and model-cache lookup at another directory without moving the workspace or sessions.
+Local defaults bind gRPC to `127.0.0.1:8080` and readiness to `127.0.0.1:8081/readyz`; the HTTP A2A transport is disabled unless `PI_HTTP_PORT` is set. The workspace and pi session live in `.data/`, not your repository checkout. Each request resumes the most recent pi session in that directory, including after a process restart. `PI_CODING_AGENT_DIR` may point pi's credential and model-cache lookup at another directory without moving the workspace or sessions.
 
 `npm run check` runs **Biome check and TypeScript typecheck**. `npm run format` uses **Biome format**. `npm run build && npm start` runs the compiled package.
 
@@ -54,9 +54,24 @@ grpcurl -plaintext -H 'a2a-version: 1.0' \
   127.0.0.1:8080 lf.a2a.v1.A2AService/SendStreamingMessage
 ```
 
+## Deploy on kagent 0.10.x
+
+The checked-in `deploy-v1alpha2.yaml` is ready for the current legacy `kagent.dev/v1alpha2` cluster. It creates a PVC and a BYO `Agent`; kagent generates its Deployment and Service. First create or update the ignored OAuth Secret, then apply the manifest:
+
+```sh
+kubectl -n kagent create secret generic pi-agent-openai-codex \
+  --from-file=auth.json=.pi/agent/auth.json \
+  --dry-run=client -o yaml | kubectl apply -f -
+kubectl apply -f deploy-v1alpha2.yaml
+kubectl -n kagent wait --for=condition=Ready agent/pi-agent --timeout=5m
+kagent -n kagent invoke --agent pi-agent --task '只回覆 OK，不要使用工具。'
+```
+
+This mode serves the v0.3 agent card and JSON-RPC on port 8080. Because a legacy Deployment is one durable pi runtime rather than one Actor per instance, invocations without a context ID share the `legacy-default` conversation.
+
 ## Deploy with BYO Harness
 
-Requires kagent with the BYO compiler, Substrate, a same-namespace WorkerPool, snapshot storage, and credentials for your model provider. You need permission to write Harnesses. Do not expose the runtime directly through a public Service or Ingress.
+Requires kagent with the v1alpha3 BYO compiler, Substrate, a same-namespace WorkerPool, snapshot storage, and credentials for your model provider. You need permission to write Harnesses. Do not expose the runtime directly through a public Service or Ingress.
 
 1. Build and publish the image, using this sample directory as build context:
 
@@ -102,9 +117,12 @@ The container serves A2A gRPC on port **80**, readiness on **8081**, and keeps w
 | `PI_MODEL_PROVIDER` | `settings.json`, then `anthropic` | pi provider ID; deployment uses `openai-codex` |
 | `PI_MODEL_ID` | `settings.json`, then `claude-sonnet-4-5` | pi model ID; deployment uses `gpt-5.6-sol` |
 | `PI_CODING_AGENT_AUTH_JSON` | Unset | Optional Secret-injected `auth.json`; initializes the agent directory without replacing refreshed credentials |
+| `PI_CODING_AGENT_SETTINGS_JSON` | Unset | Optional non-secret `settings.json`; deployment pins the provider, model, and `high` thinking level |
 | `PI_DATA_DIR` | `.data` | Private workspace and session root; also contains the default `agent/` directory; container uses `/data` |
 | `PI_CODING_AGENT_DIR` | `<PI_DATA_DIR>/agent` | pi agent directory used for `auth.json`, `settings.json`, and `models-store.json`; set to `$PWD/.pi/agent` to reuse local pi configuration |
-| `PI_GRPC_ADDRESS` | `127.0.0.1:8080` | Local bind address; container uses `0.0.0.0:80` |
+| `PI_GRPC_ADDRESS` | `127.0.0.1:8080` | gRPC bind address; Harness uses `0.0.0.0:80`, legacy deployment uses internal port 8082 |
+| `PI_HTTP_HOST` | `127.0.0.1` | Optional JSON-RPC bind host; legacy deployment uses `0.0.0.0` |
+| `PI_HTTP_PORT` | Unset | Enables A2A HTTP JSON-RPC and the agent card; legacy deployment uses `8080` |
 | `PI_HEALTH_HOST` | `127.0.0.1` | Local readiness bind host; container uses `0.0.0.0` |
 | `PI_HEALTH_PORT` | `8081` | Local readiness port; keep 8081 in Substrate |
 | `KAGENT_AGENT_CARD_JSON` | Minimal sample card | Generated card supplied by kagent |

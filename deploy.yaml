@@ -25,6 +25,8 @@ spec:
       value: openai-codex
     - name: PI_MODEL_ID
       value: gpt-5.6-sol
+    - name: PI_CODING_AGENT_SETTINGS_JSON
+      value: '{"lastChangelogVersion":"0.85.1","defaultProvider":"openai-codex","defaultModel":"gpt-5.6-sol","defaultThinkingLevel":"high"}'
     - name: PI_CODING_AGENT_AUTH_JSON
       credentialRef:
         name: pi-agent-openai-codex

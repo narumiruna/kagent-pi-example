@@ -34,6 +34,38 @@ for (const mode of ["ok", "throw", "error", "retry"] as const) {
   });
 }
 
+test("A2A v0.3 JSON-RPC compatibility serves legacy kagent", { timeout: 15000 }, async (t) => {
+  const pi = new FakePi();
+  const server = await startServer(pi, { ...options(), httpHost: "127.0.0.1", httpPort: 0 });
+  t.after(() => server.close());
+  assert.ok(server.httpPort !== undefined);
+  const cardResponse = await fetch(`http://127.0.0.1:${server.httpPort}/.well-known/agent-card.json`);
+  assert.equal(cardResponse.status, 200);
+  assert.equal(((await cardResponse.json()) as { protocolVersion?: string }).protocolVersion, "0.3");
+  const response = await fetch(`http://127.0.0.1:${server.httpPort}`, {
+    method: "POST",
+    headers: { "content-type": "application/json", "a2a-version": "0.3" },
+    body: JSON.stringify({
+      jsonrpc: "2.0",
+      id: "request-1",
+      method: "message/send",
+      params: {
+        message: {
+          kind: "message",
+          taskId: "task-1",
+          role: "user",
+          parts: [{ kind: "text", text: "Hello over JSON-RPC" }],
+        },
+      },
+    }),
+  });
+  assert.equal(response.status, 200);
+  const body = (await response.json()) as { result?: { id?: string; status?: { state?: string } } };
+  assert.equal(body.result?.id, "task-1");
+  assert.equal(body.result?.status?.state, "completed");
+  assert.deepEqual(pi.prompts, ["Hello over JSON-RPC"]);
+});
+
 test("streaming preserves gateway IDs and returns artifact before completion", { timeout: 15000 }, async (t) => {
   const server = await startServer(new FakePi(), options());
   t.after(() => server.close());
