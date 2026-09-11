@@ -15,6 +15,8 @@ spec:
   env:
     - name: PI_DATA_DIR
       value: /data
+    - name: PI_CODING_AGENT_DIR
+      value: /data/agent
     - name: PI_GRPC_ADDRESS
       value: "0.0.0.0:80"
     - name: PI_HEALTH_HOST

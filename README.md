@@ -38,9 +38,12 @@ npm test
 
 # Set ANTHROPIC_API_KEY in your environment first.
 npm run dev
+
+# Or use credentials from this checkout's ignored .pi/agent/auth.json.
+PI_CODING_AGENT_DIR="$PWD/.pi/agent" npm run dev
 ```
 
-Local defaults bind gRPC to `127.0.0.1:8080` and readiness to `127.0.0.1:8081/readyz`. The workspace and pi session live in `.data/`, not your repository checkout. Each request resumes the most recent pi session in that directory, including after a process restart.
+Local defaults bind gRPC to `127.0.0.1:8080` and readiness to `127.0.0.1:8081/readyz`. The workspace and pi session live in `.data/`, not your repository checkout. Each request resumes the most recent pi session in that directory, including after a process restart. `PI_CODING_AGENT_DIR` may point pi's credential and model-cache lookup at another directory without moving the workspace or sessions.
 
 `npm run check` runs **Biome check and TypeScript typecheck**. `npm run format` uses **Biome format**. `npm run build && npm start` runs the compiled package.
 
@@ -96,13 +99,14 @@ The container serves A2A gRPC on port **80**, readiness on **8081**, and keeps w
 | `PI_MODEL_PROVIDER` | `anthropic` | pi provider ID |
 | `PI_MODEL_ID` | `claude-sonnet-4-5` | pi model ID |
 | `ANTHROPIC_API_KEY` | Required for default provider | Provider credential; other providers use their own pi-supported environment variables |
-| `PI_DATA_DIR` | `.data` | Private workspace, configuration, and session root; container uses `/data` |
+| `PI_DATA_DIR` | `.data` | Private workspace and session root; also contains the default `agent/` directory; container uses `/data` |
+| `PI_CODING_AGENT_DIR` | `<PI_DATA_DIR>/agent` | pi agent directory used for `auth.json` and `models-store.json`; set to `$PWD/.pi/agent` to reuse a local pi login |
 | `PI_GRPC_ADDRESS` | `127.0.0.1:8080` | Local bind address; container uses `0.0.0.0:80` |
 | `PI_HEALTH_HOST` | `127.0.0.1` | Local readiness bind host; container uses `0.0.0.0` |
 | `PI_HEALTH_PORT` | `8081` | Local readiness port; keep 8081 in Substrate |
 | `KAGENT_AGENT_CARD_JSON` | Minimal sample card | Generated card supplied by kagent |
 
-The sample deliberately **ignores `KAGENT_CONFIG_JSON`**. AgentTemplate prompts, MCP tools, skills, plugins, and model settings are not translated into pi configuration. pi uses its built-in coding prompt/tools and explicit provider environment settings. Workspace-local extensions, settings, skills, prompt templates, and context files are not automatically loaded. Remote text is not expanded as pi slash commands.
+The sample deliberately **ignores `KAGENT_CONFIG_JSON`**. AgentTemplate prompts, MCP tools, skills, plugins, and model settings are not translated into pi configuration. pi uses its built-in coding prompt/tools and explicit provider environment settings. `PI_CODING_AGENT_DIR` supplies credentials and the cached model catalog, but this service does not load its `settings.json`; set `PI_MODEL_PROVIDER` and `PI_MODEL_ID` explicitly when they differ from the defaults. Workspace-local extensions, settings, skills, prompt templates, and context files are not automatically loaded. Remote text is not expanded as pi slash commands.
 
 ## Semantics and limits
 

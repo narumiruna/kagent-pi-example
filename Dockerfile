@@ -19,6 +19,7 @@ RUN npm ci --omit=dev --ignore-scripts --no-audit --no-fund && npm cache clean -
 COPY --from=build /app/dist ./dist
 ENV HOME=/data \
     PI_DATA_DIR=/data \
+    PI_CODING_AGENT_DIR=/data/agent \
     PI_GRPC_ADDRESS=0.0.0.0:80 \
     PI_HEALTH_HOST=0.0.0.0 \
     PI_HEALTH_PORT=8081 \

@@ -13,7 +13,7 @@ import { agentCard } from "./server.js";
 
 const dataDir = resolve(process.env.PI_DATA_DIR ?? ".data");
 const cwd = join(dataDir, "workspace");
-const agentDir = join(dataDir, "agent");
+const agentDir = resolve(process.env.PI_CODING_AGENT_DIR ?? join(dataDir, "agent"));
 const sessionDir = join(dataDir, "sessions");
 await Promise.all([cwd, agentDir, sessionDir].map((directory) => mkdir(directory, { recursive: true })));
 
