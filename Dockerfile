@@ -1,4 +1,4 @@
-FROM node:22-bookworm-slim AS build
+FROM node:26-bookworm-slim AS build
 WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci --ignore-scripts --no-audit --no-fund
@@ -9,7 +9,7 @@ RUN npm run build
 
 # Bookworm matches the glibc baseline used by the existing BYO examples.
 # Node/V8 checkpoint-restore still needs validation on your Substrate version.
-FROM node:22-bookworm-slim
+FROM node:26-bookworm-slim
 RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
     bash ca-certificates git ripgrep \
     && rm -rf /var/lib/apt/lists/*
