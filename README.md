@@ -67,7 +67,7 @@ kubectl -n kagent wait --for=condition=Ready agent/pi-agent --timeout=5m
 kagent -n kagent invoke --agent pi-agent --task '只回覆 OK，不要使用工具。'
 ```
 
-This mode serves the v0.3 agent card and JSON-RPC on port 8080. Because a legacy Deployment is one durable pi runtime rather than one Actor per instance, invocations without a context ID share the `legacy-default` conversation.
+This mode serves the v0.3 agent card and JSON-RPC on port 8080. Because a legacy Deployment is one durable pi runtime rather than one Actor per instance, all legacy UI/CLI context IDs are normalized to the shared `legacy-default` conversation.
 
 ## Deploy with BYO Harness
 

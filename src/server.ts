@@ -82,9 +82,10 @@ export async function startServer(session: PiSession, options: ServerOptions) {
               const body = request.body as { method?: string; params?: { message?: Record<string, unknown> } };
               if (body?.method?.startsWith("message/") && body.params?.message) {
                 if (!body.params.message.messageId) body.params.message.messageId = randomUUID();
-                // A legacy Deployment serves one durable pi conversation, so
-                // requests without a kagent session share one stable context.
-                if (!body.params.message.contextId) body.params.message.contextId = "legacy-default";
+                // A legacy Deployment serves one durable pi conversation rather
+                // than one isolated Actor per context. Normalize every UI/CLI
+                // session so changing kagent context IDs cannot poison the runtime.
+                body.params.message.contextId = "legacy-default";
               }
               next();
             })
