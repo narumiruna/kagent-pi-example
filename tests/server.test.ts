@@ -84,7 +84,10 @@ test("streaming preserves gateway IDs and returns artifact before completion", {
   assert.equal(artifact.value.artifact?.parts[0]?.content?.value, "Hello from pi");
   const terminal = events.at(-1)?.payload;
   assert.equal(terminal?.$case, "statusUpdate");
-  if (terminal?.$case === "statusUpdate") assert.equal(terminal.value.status?.state, TaskState.TASK_STATE_COMPLETED);
+  if (terminal?.$case === "statusUpdate") {
+    assert.equal(terminal.value.status?.state, TaskState.TASK_STATE_COMPLETED);
+    assert.equal(terminal.value.status?.message, undefined);
+  }
 });
 
 test("cancellation aborts pi; concurrent requests are rejected, not queued", { timeout: 15000 }, async (t) => {

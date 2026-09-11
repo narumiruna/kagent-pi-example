@@ -107,7 +107,9 @@ export class PiExecutor implements AgentExecutor {
       } else if (!lastAssistant || !["stop", "toolUse"].includes(lastAssistant.stopReason)) {
         status(TaskState.TASK_STATE_FAILED, "Pi did not complete the response successfully.");
       } else {
-        status(TaskState.TASK_STATE_COMPLETED, lastAssistant.text || "Done.");
+        // The assistant text was already published as an artifact. Repeating it
+        // in the terminal status makes kagent render the same answer twice.
+        status(TaskState.TASK_STATE_COMPLETED, lastAssistant.text ? undefined : "Done.");
       }
     } catch {
       // Provider errors may contain request bodies or credentials. Return a safe failure.
