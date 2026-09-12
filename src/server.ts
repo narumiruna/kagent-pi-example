@@ -15,6 +15,7 @@ export type ServerOptions = {
   healthPort: number;
   httpHost?: string;
   httpPort?: number;
+  expandPromptTemplates?: boolean;
   card: AgentCard;
 };
 
@@ -41,7 +42,7 @@ export function agentCard(json?: string): AgentCard {
 }
 
 export async function startServer(session: PiSession, options: ServerOptions) {
-  const executor = new PiExecutor(session);
+  const executor = new PiExecutor(session, options.expandPromptTemplates);
   const card = AgentCard.fromJSON(AgentCard.toJSON(options.card));
   if (options.httpPort !== undefined) {
     for (const protocolVersion of ["1.0", "0.3"]) {

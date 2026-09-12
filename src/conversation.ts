@@ -1,7 +1,7 @@
 import type { AgentSessionEvent } from "@earendil-works/pi-coding-agent";
 import type { PiSession } from "./executor.js";
 
-type ExecutionSession = PiSession & { dispose(): void };
+type ExecutionSession = PiSession & { dispose(): void; shutdown?(): Promise<void> };
 
 // Substrate can resume a golden process with a newer /data snapshot. Never
 // cache the execution session in that process: reopen pi's JSONL each prompt.
@@ -32,7 +32,13 @@ export class PiConversation implements PiSession {
       if (!this.aborted) await session.prompt(text, options);
     } finally {
       unsubscribe?.();
-      session?.dispose();
+      if (session) {
+        try {
+          await session.shutdown?.();
+        } finally {
+          session.dispose();
+        }
+      }
       this.pending = undefined;
     }
   }

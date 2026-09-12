@@ -23,7 +23,7 @@ spec:
   type: BYO
   byo:
     deployment:
-      image: docker.io/narumi/kagent-pi-example@sha256:187fe488aca979197e817ebc47a54a8914fc5951bcd0df90adc5449b6773500b
+      image: docker.io/narumi/kagent-pi-example@sha256:e6a83ff71baaf58942f189e423cb24bc63f951286ab9bdbacf7d5aa78d9f7b97
       imagePullPolicy: IfNotPresent
       replicas: 1
       cmd: /usr/local/bin/node
@@ -50,6 +50,12 @@ spec:
           value: gpt-5.6-sol
         - name: PI_CODING_AGENT_SETTINGS_JSON
           value: '{"lastChangelogVersion":"0.85.1","defaultProvider":"openai-codex","defaultModel":"gpt-5.6-sol","defaultThinkingLevel":"high"}'
+        - name: PI_SKILL_PATHS_JSON
+          value: '["/app/skills"]'
+        - name: PI_TOOLS_JSON
+          value: '["read","write","edit","bash","grep","find","ls"]'
+        - name: PI_EXPAND_PROMPT_TEMPLATES
+          value: "1"
         - name: PI_CODING_AGENT_AUTH_JSON
           valueFrom:
             secretKeyRef:

@@ -9,6 +9,7 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import { createA2AExtension } from "../extensions/a2a.js";
 import { PiConversation } from "./conversation.js";
+import { parseAbsolutePaths, parseEnabled, parseToolNames } from "./runtime-config.js";
 import { agentCard } from "./server.js";
 
 const dataDir = resolve(process.env.PI_DATA_DIR ?? ".data");
@@ -67,6 +68,10 @@ const httpPort = process.env.PI_HTTP_PORT === undefined ? undefined : Number(pro
 if (httpPort !== undefined && (!Number.isInteger(httpPort) || httpPort < 1 || httpPort > 65535)) {
   throw new Error("Invalid PI_HTTP_PORT");
 }
+const skillPaths = parseAbsolutePaths(process.env.PI_SKILL_PATHS_JSON, "PI_SKILL_PATHS_JSON");
+const extensionPaths = parseAbsolutePaths(process.env.PI_EXTENSION_PATHS_JSON, "PI_EXTENSION_PATHS_JSON");
+const tools = parseToolNames(process.env.PI_TOOLS_JSON);
+const expandPromptTemplates = parseEnabled(process.env.PI_EXPAND_PROMPT_TEMPLATES, "PI_EXPAND_PROMPT_TEMPLATES");
 const resourceOptions = {
   cwd,
   agentDir,
@@ -78,8 +83,15 @@ const resourceOptions = {
   noThemes: true,
   noContextFiles: true,
 };
+const executionResourceOptions = {
+  ...resourceOptions,
+  // noSkills/noExtensions disable writable global/project discovery; only
+  // administrator-selected absolute paths are additive trusted resources.
+  additionalSkillPaths: skillPaths,
+  additionalExtensionPaths: extensionPaths,
+};
 const conversation = new PiConversation(async () => {
-  const resourceLoader = new DefaultResourceLoader(resourceOptions);
+  const resourceLoader = new DefaultResourceLoader(executionResourceOptions);
   await resourceLoader.reload();
   const { session } = await createAgentSession({
     cwd,
@@ -89,8 +101,28 @@ const conversation = new PiConversation(async () => {
     settingsManager,
     resourceLoader,
     sessionManager: SessionManager.continueRecent(cwd, sessionDir),
+    tools,
   });
-  return session;
+  let extensionFailed = false;
+  await session.bindExtensions({
+    mode: "print",
+    onError: (error) => {
+      extensionFailed = true;
+      console.error(`Pi execution extension failed: ${error.event ?? "unknown event"}`);
+    },
+  });
+  if (extensionFailed) {
+    await session.extensionRunner.emit({ type: "session_shutdown", reason: "quit" });
+    session.dispose();
+    throw new Error("Could not start pi execution extensions.");
+  }
+  return {
+    prompt: session.prompt.bind(session),
+    abort: session.abort.bind(session),
+    subscribe: session.subscribe.bind(session),
+    shutdown: () => session.extensionRunner.emit({ type: "session_shutdown", reason: "quit" }),
+    dispose: () => session.dispose(),
+  };
 });
 const loader = new DefaultResourceLoader({
   ...resourceOptions,
@@ -101,6 +133,7 @@ const loader = new DefaultResourceLoader({
       healthPort,
       httpHost: process.env.PI_HTTP_HOST,
       httpPort,
+      expandPromptTemplates,
       card: agentCard(process.env.KAGENT_AGENT_CARD_JSON),
     }),
   ],

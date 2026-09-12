@@ -6,6 +6,10 @@ import { FakePi } from "./helpers.js";
 
 class ExecutionSession extends FakePi {
   disposed = false;
+  shutdownCount = 0;
+  async shutdown() {
+    this.shutdownCount++;
+  }
   dispose() {
     this.disposed = true;
   }
@@ -30,6 +34,7 @@ test("every prompt opens and disposes its execution session", async () => {
     [["first"], ["second"]],
   );
   assert.ok(sessions.every((session) => session.disposed));
+  assert.ok(sessions.every((session) => session.shutdownCount === 1));
   assert.equal(events.filter((event) => event.type === "message_end").length, 2);
   unsubscribe();
 });

@@ -6,7 +6,7 @@ A TypeScript BYO runtime using pi's SDK and an A2A pi extension. It supports bot
 flowchart LR
     Gateway[kagent A2A gateway] -->|A2A v1 gRPC :80| Extension[pi A2A extension]
     Extension --> SDK[pi SDK session]
-    SDK --> Tools[read / write / edit / bash]
+    SDK --> Tools[read / write / edit / bash / grep / find / ls]
     SDK --> Model[Model provider]
     SDK --> Data[DurableDir /data]
 ```
@@ -19,6 +19,7 @@ flowchart LR
 - `src/request-handler.ts`: adapts kagent-preallocated task IDs to the upstream JS request handler.
 - `src/executor.ts`: maps pi execution to upstream A2A tasks, status updates, artifacts, and cancellation.
 - `src/conversation.ts`: opens a fresh execution session from durable pi history for each prompt.
+- `skills/`: reviewed, image-baked Agent Skills available to execution sessions.
 
 The extension is an SDK-injected factory, not a standalone `pi -e` extension. An in-memory pi host session owns the extension lifecycle; it never prompts the model. Requests use a separate execution session, await `session.prompt()` including retries, then dispose it. Each execution reopens the same durable conversation. This matters because restoring a Substrate golden process does not rerun `index.ts`: caching execution history in that process would retain stale context after `/data` changes.
 
@@ -118,6 +119,10 @@ The container serves A2A gRPC on port **80**, readiness on **8081**, and keeps w
 | `PI_MODEL_ID` | `settings.json`, then `claude-sonnet-4-5` | pi model ID; deployment uses `gpt-5.6-sol` |
 | `PI_CODING_AGENT_AUTH_JSON` | Unset | Optional Secret-injected `auth.json`; initializes the agent directory without replacing refreshed credentials |
 | `PI_CODING_AGENT_SETTINGS_JSON` | Unset | Optional non-secret `settings.json`; deployment pins the provider, model, and `high` thinking level |
+| `PI_SKILL_PATHS_JSON` | `[]` | JSON array of absolute, administrator-trusted skill paths; deployment loads `/app/skills` |
+| `PI_EXTENSION_PATHS_JSON` | `[]` | JSON array of absolute, administrator-trusted Pi extensions that may register custom tools |
+| `PI_TOOLS_JSON` | SDK defaults | JSON tool-name allowlist; deployment enables `read`, `write`, `edit`, `bash`, `grep`, `find`, and `ls` |
+| `PI_EXPAND_PROMPT_TEMPLATES` | `false` | Enable trusted `/skill:name`, prompt-template, and extension-command expansion |
 | `PI_DATA_DIR` | `.data` | Private workspace and session root; also contains the default `agent/` directory; container uses `/data` |
 | `PI_CODING_AGENT_DIR` | `<PI_DATA_DIR>/agent` | pi agent directory used for `auth.json`, `settings.json`, and `models-store.json`; set to `$PWD/.pi/agent` to reuse local pi configuration |
 | `PI_GRPC_ADDRESS` | `127.0.0.1:8080` | gRPC bind address; Harness uses `0.0.0.0:80`, legacy deployment uses internal port 8082 |
@@ -127,7 +132,7 @@ The container serves A2A gRPC on port **80**, readiness on **8081**, and keeps w
 | `PI_HEALTH_PORT` | `8081` | Local readiness port; keep 8081 in Substrate |
 | `KAGENT_AGENT_CARD_JSON` | Minimal sample card | Generated card supplied by kagent |
 
-The sample deliberately **ignores `KAGENT_CONFIG_JSON`**. AgentTemplate prompts, MCP tools, skills, plugins, and model settings are not translated into pi configuration. pi uses its built-in coding prompt/tools, global settings from `PI_CODING_AGENT_DIR`, and explicit provider environment overrides. Executable extensions, skills, prompt templates, themes, project settings, and context files are not automatically loaded. Remote text is not expanded as pi slash commands.
+The sample deliberately **ignores `KAGENT_CONFIG_JSON`**. AgentTemplate prompts, MCP tools, skills, plugins, and model settings are not automatically translated into pi configuration. pi uses its built-in coding prompt/tools, global settings from `PI_CODING_AGENT_DIR`, and explicit provider environment overrides. Writable global/project extensions, skills, prompt templates, themes, project settings, and context files remain disabled. Only absolute paths explicitly selected through `PI_SKILL_PATHS_JSON` and `PI_EXTENSION_PATHS_JSON` are loaded; deployments enable command expansion for those reviewed resources. kagent MCP tools still require an explicit Pi tool adapter.
 
 ## Semantics and limits
 

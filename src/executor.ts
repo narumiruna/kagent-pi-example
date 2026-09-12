@@ -19,7 +19,10 @@ export class PiExecutor implements AgentExecutor {
   private contextId?: string;
   private closing = false;
 
-  constructor(private readonly session: PiSession) {}
+  constructor(
+    private readonly session: PiSession,
+    private readonly expandPromptTemplates = false,
+  ) {}
 
   async execute(request: RequestContext, bus: ExecutionEventBus): Promise<void> {
     const { taskId, contextId, userMessage } = request;
@@ -101,7 +104,7 @@ export class PiExecutor implements AgentExecutor {
       const text = userMessage.parts
         .map((part) => (part.content?.$case === "text" ? part.content.value : ""))
         .join("\n");
-      await this.session.prompt(text, { expandPromptTemplates: false, source: "extension" });
+      await this.session.prompt(text, { expandPromptTemplates: this.expandPromptTemplates, source: "extension" });
       if (run.cancelled || lastAssistant?.stopReason === "aborted") {
         status(TaskState.TASK_STATE_CANCELED);
       } else if (!lastAssistant || !["stop", "toolUse"].includes(lastAssistant.stopReason)) {

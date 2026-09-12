@@ -17,6 +17,7 @@ WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci --omit=dev --ignore-scripts --no-audit --no-fund && npm cache clean --force
 COPY --from=build /app/dist ./dist
+COPY skills ./skills
 ENV HOME=/data \
     PI_DATA_DIR=/data \
     PI_CODING_AGENT_DIR=/data/agent \
