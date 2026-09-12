@@ -5,13 +5,11 @@ import { PiConversation } from "../src/conversation.js";
 import { FakePi } from "./helpers.js";
 
 class ExecutionSession extends FakePi {
-  disposed = false;
-  shutdownCount = 0;
-  async shutdown() {
-    this.shutdownCount++;
-  }
-  dispose() {
-    this.disposed = true;
+  closed = false;
+  closeError = false;
+  async close() {
+    this.closed = true;
+    if (this.closeError) throw new Error("close failed");
   }
 }
 
@@ -33,8 +31,7 @@ test("every prompt opens and disposes its execution session", async () => {
     sessions.map((session) => session.prompts),
     [["first"], ["second"]],
   );
-  assert.ok(sessions.every((session) => session.disposed));
-  assert.ok(sessions.every((session) => session.shutdownCount === 1));
+  assert.ok(sessions.every((session) => session.closed));
   assert.equal(events.filter((event) => event.type === "message_end").length, 2);
   unsubscribe();
 });
@@ -48,7 +45,7 @@ test("cancellation during session creation prevents a model call", async () => {
   created.resolve(session);
   await Promise.all([prompting, aborting]);
   assert.deepEqual(session.prompts, []);
-  assert.equal(session.disposed, true);
+  assert.equal(session.closed, true);
 });
 
 test("execution failures release the session and permit another prompt", async () => {
@@ -56,8 +53,18 @@ test("execution failures release the session and permit another prompt", async (
   session.mode = "throw";
   const conversation = new PiConversation(async () => session);
   await assert.rejects(conversation.prompt("fail", options));
-  assert.equal(session.disposed, true);
+  assert.equal(session.closed, true);
   session.mode = "ok";
   await conversation.prompt("retry", options);
   assert.deepEqual(session.prompts, ["fail", "retry"]);
+});
+
+test("cleanup failures do not leave the conversation busy", async () => {
+  const session = new ExecutionSession();
+  session.closeError = true;
+  const conversation = new PiConversation(async () => session);
+  await assert.rejects(conversation.prompt("first", options), /close failed/);
+  session.closeError = false;
+  await conversation.prompt("second", options);
+  assert.deepEqual(session.prompts, ["first", "second"]);
 });

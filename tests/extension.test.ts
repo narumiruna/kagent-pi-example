@@ -19,6 +19,7 @@ import {
 import { createA2AExtension } from "../extensions/a2a.js";
 import { PiConversation } from "../src/conversation.js";
 import { agentCard } from "../src/server.js";
+import { bindExecutionSession } from "../src/session-lifecycle.js";
 import { request, TestClient } from "./helpers.js";
 
 async function freePort(): Promise<number> {
@@ -119,7 +120,7 @@ test("pi extension serves gRPC and resumes its real pi session after replacement
         noTools: "all",
       });
       executionSessionFile = execution.sessionFile;
-      return execution;
+      return bindExecutionSession(execution, "test execution extension failed");
     });
     const loader = new DefaultResourceLoader({
       ...resourceOptions,

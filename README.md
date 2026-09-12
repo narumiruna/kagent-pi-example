@@ -19,6 +19,8 @@ flowchart LR
 - `src/request-handler.ts`: adapts kagent-preallocated task IDs to the upstream JS request handler.
 - `src/executor.ts`: maps pi execution to upstream A2A tasks, status updates, artifacts, and cancellation.
 - `src/conversation.ts`: opens a fresh execution session from durable pi history for each prompt.
+- `src/session-lifecycle.ts`: binds headless extensions and guarantees idempotent shutdown/disposal.
+- `src/runtime-config.ts`: validates JSON lists, trusted paths, booleans, and network ports.
 - `skills/`: reviewed, image-baked Agent Skills available to execution sessions.
 
 The extension is an SDK-injected factory, not a standalone `pi -e` extension. An in-memory pi host session owns the extension lifecycle; it never prompts the model. Requests use a separate execution session, await `session.prompt()` including retries, then dispose it. Each execution reopens the same durable conversation. This matters because restoring a Substrate golden process does not rerun `index.ts`: caching execution history in that process would retain stale context after `/data` changes.

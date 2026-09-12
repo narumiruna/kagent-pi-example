@@ -23,7 +23,7 @@ spec:
   type: BYO
   byo:
     deployment:
-      image: docker.io/narumi/kagent-pi-example@sha256:e6a83ff71baaf58942f189e423cb24bc63f951286ab9bdbacf7d5aa78d9f7b97
+      image: docker.io/narumi/kagent-pi-example@sha256:a1382c94096cfefde8d043a241957fb207eb3af30f0413d4807a65bbaf4adbb3
       imagePullPolicy: IfNotPresent
       replicas: 1
       cmd: /usr/local/bin/node

@@ -1,6 +1,14 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { parseAbsolutePaths, parseEnabled, parseStringArray, parseToolNames } from "../src/runtime-config.js";
+import {
+  parseAbsolutePaths,
+  parseEnabled,
+  parseOptionalPort,
+  parsePort,
+  parseStringArray,
+  parseToolNames,
+  validateJsonObject,
+} from "../src/runtime-config.js";
 
 test("trusted resource paths require unique absolute paths", () => {
   assert.deepEqual(parseAbsolutePaths('["/app/skills","/app/skills"]', "PATHS"), ["/app/skills"]);
@@ -19,4 +27,9 @@ test("JSON arrays and booleans fail closed", () => {
   assert.equal(parseEnabled("true", "FLAG"), true);
   assert.equal(parseEnabled(undefined, "FLAG"), false);
   assert.throws(() => parseEnabled("yes", "FLAG"), /must be one of/);
+  validateJsonObject('{"enabled":true}', "OBJECT");
+  assert.throws(() => validateJsonObject("[]", "OBJECT"), /JSON object/);
+  assert.equal(parsePort(undefined, "PORT", 8080), 8080);
+  assert.equal(parseOptionalPort(undefined, "PORT"), undefined);
+  assert.throws(() => parseOptionalPort("0", "PORT"), /1 to 65535/);
 });

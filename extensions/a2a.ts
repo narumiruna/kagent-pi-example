@@ -6,15 +6,22 @@ import { type ServerOptions, startServer } from "../src/server.js";
 // Factories may load without a session, so sockets belong in session_start.
 export function createA2AExtension(conversation: PiSession, options: ServerOptions): ExtensionFactory {
   return (pi) => {
-    let server: Awaited<ReturnType<typeof startServer>> | undefined;
+    let server: ReturnType<typeof startServer> | undefined;
     pi.on("session_start", async () => {
-      if (server) throw new Error("A2A server is already running.");
-      server = await startServer(conversation, options);
+      if (server) throw new Error("A2A server is already starting or running.");
+      const starting = startServer(conversation, options);
+      server = starting;
+      try {
+        await starting;
+      } catch (error) {
+        if (server === starting) server = undefined;
+        throw error;
+      }
     });
     pi.on("session_shutdown", async () => {
       const current = server;
       server = undefined;
-      await current?.close();
+      if (current) await (await current).close();
     });
   };
 }

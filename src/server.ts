@@ -81,7 +81,8 @@ export async function startServer(session: PiSession, options: ServerOptions) {
               // kagent 0.10 may omit the v0.3 message ID; the compatibility
               // decoder requires one before DefaultRequestHandler can allocate a task.
               const body = request.body as { method?: string; params?: { message?: Record<string, unknown> } };
-              if (body?.method?.startsWith("message/") && body.params?.message) {
+              const requestedVersion = request.get("a2a-version")?.trim() || "0.3";
+              if (requestedVersion.startsWith("0.3") && body?.method?.startsWith("message/") && body.params?.message) {
                 if (!body.params.message.messageId) body.params.message.messageId = randomUUID();
                 // A legacy Deployment serves one durable pi conversation rather
                 // than one isolated Actor per context. Normalize every UI/CLI
@@ -136,6 +137,7 @@ export async function startServer(session: PiSession, options: ServerOptions) {
           const timeout = setTimeout(() => {
             grpc.forceShutdown();
             health.closeAllConnections();
+            http?.closeAllConnections();
           }, 5000);
           timeout.unref();
           try {

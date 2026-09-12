@@ -1,5 +1,31 @@
 import { isAbsolute } from "node:path";
 
+export function validateJsonObject(value: string, name: string): void {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(value);
+  } catch (error) {
+    throw new Error(`${name} must be a JSON object`, { cause: error });
+  }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new Error(`${name} must be a JSON object`);
+  }
+}
+
+function validatePort(port: number, name: string): number {
+  if (!Number.isInteger(port) || port < 1 || port > 65535)
+    throw new Error(`${name} must be an integer from 1 to 65535`);
+  return port;
+}
+
+export function parsePort(value: string | undefined, name: string, defaultValue: number): number {
+  return validatePort(value === undefined ? defaultValue : Number(value), name);
+}
+
+export function parseOptionalPort(value: string | undefined, name: string): number | undefined {
+  return value === undefined ? undefined : validatePort(Number(value), name);
+}
+
 export function parseStringArray(value: string | undefined, name: string): string[] {
   if (value === undefined || value.trim() === "") return [];
   let parsed: unknown;
