@@ -10,7 +10,11 @@ Implement these capabilities in order:
 
 The order is intentional. MCP and Memory increase the amount of external and user-scoped data available to the model, so they must not be added before filesystem and session isolation are reliable.
 
-## Current state
+## Implementation status
+
+Completed on 2026-09-12. The runtime now has canonical workspace tools, a credential-free Bubblewrap sidecar, non-root/read-only deployment hardening, hashed durable context sessions, bounded concurrency, and feature-flagged MCP/Memory adapters. The docker-desktop kagent 0.10.1 database was logically backed up, moved to digest-pinned pgvector PostgreSQL, migrated, and verified (`vector`, `memory`, and HTTP 200 Memories list). MCP and Memory remain disabled in deployment defaults until destination-specific endpoints and Secrets are configured.
+
+## Baseline state (before implementation)
 
 - The execution workspace is `/data/workspace`.
 - Pi credentials and settings are under `/data/agent`.

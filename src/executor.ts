@@ -3,6 +3,8 @@ import { Artifact, Message, Part, Role, Task, TaskState } from "@a2a-js/sdk";
 import { GrpcTaskNotCancelableError } from "@a2a-js/sdk/errors/grpc";
 import { AgentEvent, type AgentExecutor, type ExecutionEventBus, type RequestContext } from "@a2a-js/sdk/server";
 import type { AgentSession } from "@earendil-works/pi-coding-agent";
+import type { ContextLease, ContextSessionProvider } from "./context-runtime-manager.js";
+import { runWithRequestIdentity } from "./integrations/identity.js";
 
 export type PiSession = Pick<AgentSession, "prompt" | "abort" | "subscribe">;
 
@@ -10,19 +12,33 @@ type ActiveRun = {
   taskId: string;
   cancelled: boolean;
   done: Promise<void>;
+  session: PiSession;
 };
 
-// One Actor owns one pi conversation. Parallel prompts must never become pi
-// steering messages, since they would mix otherwise independent A2A tasks.
+function isProvider(value: PiSession | ContextSessionProvider): value is ContextSessionProvider {
+  return "acquire" in value;
+}
+
+// Each A2A context receives an independent Pi conversation. A context provider
+// supplies bounded global concurrency while the executor owns task cancellation.
 export class PiExecutor implements AgentExecutor {
-  private active?: ActiveRun;
-  private contextId?: string;
+  private readonly active = new Map<string, ActiveRun>();
+  private singleContextId?: string;
   private closing = false;
 
   constructor(
-    private readonly session: PiSession,
+    private readonly sessions: PiSession | ContextSessionProvider,
     private readonly expandPromptTemplates = false,
   ) {}
+
+  private async acquire(contextId: string): Promise<ContextLease> {
+    if (isProvider(this.sessions)) return this.sessions.acquire(contextId);
+    if (this.active.size || (this.singleContextId && this.singleContextId !== contextId)) {
+      throw new Error("This runtime accepts one context and one active request at a time.");
+    }
+    this.singleContextId = contextId;
+    return { session: this.sessions, release() {} };
+  }
 
   async execute(request: RequestContext, bus: ExecutionEventBus): Promise<void> {
     const { taskId, contextId, userMessage } = request;
@@ -57,17 +73,24 @@ export class PiExecutor implements AgentExecutor {
         history: [userMessage],
       }),
     );
-    if (this.closing || this.active || (this.contextId && this.contextId !== contextId)) {
-      status(TaskState.TASK_STATE_REJECTED, "This runtime accepts one context and one active request at a time.");
+    if (this.closing) {
+      status(TaskState.TASK_STATE_REJECTED, "The runtime is shutting down.");
       bus.finished();
       return;
     }
-    this.contextId = contextId;
+    let lease: ContextLease;
+    try {
+      lease = await this.acquire(contextId);
+    } catch {
+      status(TaskState.TASK_STATE_REJECTED, "This context is busy or the runtime concurrency limit was reached.");
+      bus.finished();
+      return;
+    }
     const done = Promise.withResolvers<void>();
-    const run: ActiveRun = { taskId, cancelled: false, done: done.promise };
-    this.active = run;
+    const run: ActiveRun = { taskId, cancelled: false, done: done.promise, session: lease.session };
+    this.active.set(taskId, run);
     let lastAssistant: { stopReason: string; text: string } | undefined;
-    const unsubscribe = this.session.subscribe((event) => {
+    const unsubscribe = lease.session.subscribe((event) => {
       if (run.cancelled) return;
       if (event.type === "tool_execution_start") {
         // Tool arguments, output, and reasoning may contain secrets; do not expose them.
@@ -104,40 +127,45 @@ export class PiExecutor implements AgentExecutor {
       const text = userMessage.parts
         .map((part) => (part.content?.$case === "text" ? part.content.value : ""))
         .join("\n");
-      await this.session.prompt(text, { expandPromptTemplates: this.expandPromptTemplates, source: "extension" });
+      const caller = request.context.user;
+      const identity = caller?.isAuthenticated && caller.userName ? { userId: caller.userName } : undefined;
+      await runWithRequestIdentity(identity, () =>
+        lease.session.prompt(text, { expandPromptTemplates: this.expandPromptTemplates, source: "extension" }),
+      );
       if (run.cancelled || lastAssistant?.stopReason === "aborted") {
         status(TaskState.TASK_STATE_CANCELED);
       } else if (!lastAssistant || !["stop", "toolUse"].includes(lastAssistant.stopReason)) {
         status(TaskState.TASK_STATE_FAILED, "Pi did not complete the response successfully.");
       } else {
-        // The assistant text was already published as an artifact. Repeating it
-        // in the terminal status makes kagent render the same answer twice.
         status(TaskState.TASK_STATE_COMPLETED, lastAssistant.text ? undefined : "Done.");
       }
     } catch {
-      // Provider errors may contain request bodies or credentials. Return a safe failure.
+      // Provider and integration errors may contain request bodies or credentials.
       status(
         run.cancelled ? TaskState.TASK_STATE_CANCELED : TaskState.TASK_STATE_FAILED,
-        run.cancelled ? undefined : "Pi could not complete the request. Check provider configuration.",
+        run.cancelled ? undefined : "Pi could not complete the request. Check runtime configuration.",
       );
     } finally {
       unsubscribe();
-      this.active = undefined;
+      this.active.delete(taskId);
+      lease.release();
       bus.finished();
       done.resolve();
     }
   }
 
   async cancelTask(taskId: string): Promise<void> {
-    const run = this.active;
-    if (!run || run.taskId !== taskId) throw new GrpcTaskNotCancelableError({ message: "Task is not running." });
+    const run = this.active.get(taskId);
+    if (!run) throw new GrpcTaskNotCancelableError({ message: "Task is not running." });
     run.cancelled = true;
-    await this.session.abort();
+    await run.session.abort();
     await run.done;
   }
 
   async close(): Promise<void> {
+    if (this.closing) return;
     this.closing = true;
-    if (this.active) await this.cancelTask(this.active.taskId);
+    await Promise.all([...this.active].map(([taskId]) => this.cancelTask(taskId)));
+    if (isProvider(this.sessions)) await this.sessions.close();
   }
 }

@@ -11,8 +11,10 @@ RUN npm run build
 # Node/V8 checkpoint-restore still needs validation on your Substrate version.
 FROM node:26-bookworm-slim
 RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-    bash ca-certificates git ripgrep \
-    && rm -rf /var/lib/apt/lists/*
+    bash bubblewrap ca-certificates fd-find git ripgrep \
+    && ln -s /usr/bin/fdfind /usr/local/bin/fd \
+    && rm -rf /var/lib/apt/lists/* \
+    && useradd --uid 10001 --create-home --home-dir /home/pi --shell /usr/sbin/nologin pi
 WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci --omit=dev --ignore-scripts --no-audit --no-fund && npm cache clean --force
@@ -27,4 +29,5 @@ ENV HOME=/data \
     PI_OFFLINE=1 \
     PI_TELEMETRY=0
 EXPOSE 80 8081
+USER 10001:10001
 CMD ["/usr/local/bin/node", "/app/dist/src/index.js"]

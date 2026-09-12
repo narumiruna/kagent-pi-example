@@ -26,6 +26,19 @@ export function parseOptionalPort(value: string | undefined, name: string): numb
   return value === undefined ? undefined : validatePort(Number(value), name);
 }
 
+export function parsePositiveInteger(
+  value: string | undefined,
+  name: string,
+  defaultValue: number,
+  maximum = Number.MAX_SAFE_INTEGER,
+): number {
+  const parsed = value === undefined ? defaultValue : Number(value);
+  if (!Number.isInteger(parsed) || parsed < 1 || parsed > maximum) {
+    throw new Error(`${name} must be an integer from 1 to ${maximum}`);
+  }
+  return parsed;
+}
+
 export function parseStringArray(value: string | undefined, name: string): string[] {
   if (value === undefined || value.trim() === "") return [];
   let parsed: unknown;

@@ -17,6 +17,18 @@ spec:
       value: /data
     - name: PI_CODING_AGENT_DIR
       value: /data/agent
+    - name: PI_WORKSPACE_DIR
+      value: /data/workspace
+    - name: PI_MAX_CONCURRENCY
+      value: "2"
+    - name: PI_QUEUE_TIMEOUT_MS
+      value: "30000"
+    - name: PI_CONTEXT_IDLE_MS
+      value: "900000"
+    - name: PI_MCP_ENABLED
+      value: "false"
+    - name: PI_MEMORY_ENABLED
+      value: "false"
     - name: PI_GRPC_ADDRESS
       value: "0.0.0.0:80"
     - name: PI_HEALTH_HOST

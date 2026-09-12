@@ -1,11 +1,13 @@
-import { randomUUID } from "node:crypto";
+import { randomUUID, timingSafeEqual } from "node:crypto";
 import { once } from "node:events";
 import { createServer } from "node:http";
 import { AgentCard, AgentInterface } from "@a2a-js/sdk";
+import type { User } from "@a2a-js/sdk/server";
 import { agentCardHandler, UserBuilder as HttpUserBuilder, jsonRpcHandler } from "@a2a-js/sdk/server/express";
 import { A2AService, UserBuilder as GrpcUserBuilder, grpcService } from "@a2a-js/sdk/server/grpc";
 import { Server, ServerCredentials } from "@grpc/grpc-js";
 import express from "express";
+import type { ContextSessionProvider } from "./context-runtime-manager.js";
 import { PiExecutor, type PiSession } from "./executor.js";
 import { KagentRequestHandler } from "./request-handler.js";
 
@@ -17,7 +19,28 @@ export type ServerOptions = {
   httpPort?: number;
   expandPromptTemplates?: boolean;
   card: AgentCard;
+  identity?: {
+    userHeader: string;
+    tokenHeader?: string;
+    sharedSecret?: string;
+  };
 };
+
+function verifiedUser(userId: unknown, suppliedToken: unknown, identity: ServerOptions["identity"]): User | undefined {
+  if (!identity || typeof userId !== "string") return undefined;
+  const hasControlCharacter = [...userId].some((character) => {
+    const code = character.charCodeAt(0);
+    return code < 32 || code === 127;
+  });
+  if (!userId || userId.length > 256 || hasControlCharacter) return undefined;
+  if (identity.sharedSecret) {
+    if (typeof suppliedToken !== "string") return undefined;
+    const expected = Buffer.from(identity.sharedSecret);
+    const supplied = Buffer.from(suppliedToken);
+    if (expected.length !== supplied.length || !timingSafeEqual(expected, supplied)) return undefined;
+  }
+  return { isAuthenticated: true, userName: userId };
+}
 
 export function agentCard(json?: string): AgentCard {
   const card = json
@@ -41,8 +64,32 @@ export function agentCard(json?: string): AgentCard {
   return card;
 }
 
-export async function startServer(session: PiSession, options: ServerOptions) {
+export async function startServer(session: PiSession | ContextSessionProvider, options: ServerOptions) {
   const executor = new PiExecutor(session, options.expandPromptTemplates);
+  const identity = options.identity;
+  const grpcUserBuilder = identity
+    ? async (call: { metadata: { get(name: string): Array<string | Buffer> } }) => {
+        const value = (name: string) => {
+          const raw = call.metadata.get(name)[0];
+          return Buffer.isBuffer(raw) ? raw.toString("utf8") : raw;
+        };
+        return (
+          verifiedUser(
+            value(identity.userHeader),
+            identity.tokenHeader ? value(identity.tokenHeader) : undefined,
+            identity,
+          ) ?? (await GrpcUserBuilder.noAuthentication())
+        );
+      }
+    : GrpcUserBuilder.noAuthentication;
+  const httpUserBuilder = identity
+    ? async (request: express.Request) =>
+        verifiedUser(
+          request.get(identity.userHeader),
+          identity.tokenHeader ? request.get(identity.tokenHeader) : undefined,
+          identity,
+        ) ?? (await HttpUserBuilder.noAuthentication())
+    : HttpUserBuilder.noAuthentication;
   const card = AgentCard.fromJSON(AgentCard.toJSON(options.card));
   if (options.httpPort !== undefined) {
     for (const protocolVersion of ["1.0", "0.3"]) {
@@ -68,7 +115,7 @@ export async function startServer(session: PiSession, options: ServerOptions) {
     grpcService({
       requestHandler,
       // These are private kagent ingress endpoints; kagent owns public authentication.
-      userBuilder: GrpcUserBuilder.noAuthentication,
+      userBuilder: grpcUserBuilder,
     }),
   );
   const http =
@@ -84,10 +131,13 @@ export async function startServer(session: PiSession, options: ServerOptions) {
               const requestedVersion = request.get("a2a-version")?.trim() || "0.3";
               if (requestedVersion.startsWith("0.3") && body?.method?.startsWith("message/") && body.params?.message) {
                 if (!body.params.message.messageId) body.params.message.messageId = randomUUID();
-                // A legacy Deployment serves one durable pi conversation rather
-                // than one isolated Actor per context. Normalize every UI/CLI
-                // session so changing kagent context IDs cannot poison the runtime.
-                body.params.message.contextId = "legacy-default";
+                // Preserve a gateway-provided conversation ID. Very old callers may
+                // omit it, in which case isolate the request instead of sharing a
+                // process-wide fallback conversation.
+                if (!body.params.message.contextId) {
+                  body.params.message.contextId =
+                    body.params.message.taskId ?? `legacy-${body.params.message.messageId}`;
+                }
               }
               next();
             })
@@ -98,7 +148,7 @@ export async function startServer(session: PiSession, options: ServerOptions) {
             .use(
               jsonRpcHandler({
                 requestHandler,
-                userBuilder: HttpUserBuilder.noAuthentication,
+                userBuilder: httpUserBuilder,
                 legacyCompat: { enabled: true },
               }),
             ),

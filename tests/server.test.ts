@@ -65,7 +65,7 @@ test("A2A v0.3 JSON-RPC compatibility serves legacy kagent", { timeout: 15000 },
   });
   assert.equal(response.status, 200);
   assert.equal(body.result?.id, "task-1");
-  assert.equal(body.result?.contextId, "legacy-default");
+  assert.equal(body.result?.contextId, "kagent-ui-context");
   assert.equal(body.result?.status?.state, "completed");
   assert.deepEqual(pi.prompts, ["Hello over JSON-RPC"]);
 });

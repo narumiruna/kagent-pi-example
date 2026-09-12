@@ -1,4 +1,4 @@
-import { mkdir, writeFile } from "node:fs/promises";
+import { chmod, mkdir, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import {
   createAgentSession,
@@ -8,23 +8,33 @@ import {
   SettingsManager,
 } from "@earendil-works/pi-coding-agent";
 import { createA2AExtension } from "../extensions/a2a.js";
-import { PiConversation } from "./conversation.js";
+import { ContextRuntimeManager } from "./context-runtime-manager.js";
+import { McpClientManager } from "./integrations/mcp/client-manager.js";
+import { parseMcpServers } from "./integrations/mcp/config.js";
+import { createMcpTools } from "./integrations/mcp/pi-tool-adapter.js";
+import { loadMemoryConfig } from "./integrations/memory/config.js";
+import { EmbeddingClient } from "./integrations/memory/embedding-client.js";
+import { KagentMemoryClient } from "./integrations/memory/kagent-memory-client.js";
+import { createMemoryTools } from "./integrations/memory/memory-tools.js";
 import {
   parseAbsolutePaths,
   parseEnabled,
   parseOptionalPort,
   parsePort,
+  parsePositiveInteger,
   parseToolNames,
   validateJsonObject,
 } from "./runtime-config.js";
 import { agentCard } from "./server.js";
 import { bindExecutionSession, bindHeadlessSession } from "./session-lifecycle.js";
+import { createWorkspaceTools } from "./tools/workspace-tools.js";
 
 const dataDir = resolve(process.env.PI_DATA_DIR ?? ".data");
-const cwd = join(dataDir, "workspace");
+const cwd = resolve(process.env.PI_WORKSPACE_DIR ?? join(dataDir, "workspace"));
 const agentDir = resolve(process.env.PI_CODING_AGENT_DIR ?? join(dataDir, "agent"));
 const sessionDir = join(dataDir, "sessions");
-await Promise.all([cwd, agentDir, sessionDir].map((directory) => mkdir(directory, { recursive: true })));
+await Promise.all([cwd, agentDir, sessionDir].map((directory) => mkdir(directory, { recursive: true, mode: 0o700 })));
+await Promise.all([agentDir, sessionDir].map((directory) => chmod(directory, 0o700)));
 
 const authPath = join(agentDir, "auth.json");
 const injectedAuth = process.env.PI_CODING_AGENT_AUTH_JSON;
@@ -66,6 +76,22 @@ const skillPaths = parseAbsolutePaths(process.env.PI_SKILL_PATHS_JSON, "PI_SKILL
 const extensionPaths = parseAbsolutePaths(process.env.PI_EXTENSION_PATHS_JSON, "PI_EXTENSION_PATHS_JSON");
 const tools = parseToolNames(process.env.PI_TOOLS_JSON);
 const expandPromptTemplates = parseEnabled(process.env.PI_EXPAND_PROMPT_TEMPLATES, "PI_EXPAND_PROMPT_TEMPLATES");
+const maxConcurrency = parsePositiveInteger(process.env.PI_MAX_CONCURRENCY, "PI_MAX_CONCURRENCY", 2, 32);
+const queueTimeoutMs = parsePositiveInteger(process.env.PI_QUEUE_TIMEOUT_MS, "PI_QUEUE_TIMEOUT_MS", 30_000, 600_000);
+const contextIdleMs = parsePositiveInteger(process.env.PI_CONTEXT_IDLE_MS, "PI_CONTEXT_IDLE_MS", 900_000, 86_400_000);
+const mcpEnabled = parseEnabled(process.env.PI_MCP_ENABLED, "PI_MCP_ENABLED");
+const memoryEnabled = parseEnabled(process.env.PI_MEMORY_ENABLED, "PI_MEMORY_ENABLED");
+const userHeader = process.env.PI_TRUSTED_USER_HEADER;
+const tokenHeader = process.env.PI_IDENTITY_TOKEN_HEADER;
+const sharedSecret = process.env.PI_IDENTITY_SHARED_SECRET;
+if (
+  (!userHeader && (tokenHeader || sharedSecret)) ||
+  (tokenHeader && !sharedSecret) ||
+  (!tokenHeader && sharedSecret)
+) {
+  throw new Error("Trusted identity token header and shared Secret must be configured together");
+}
+const identity = userHeader ? { userHeader, tokenHeader, sharedSecret } : undefined;
 const resourceOptions = {
   cwd,
   agentDir,
@@ -84,31 +110,52 @@ const executionResourceOptions = {
   additionalSkillPaths: skillPaths,
   additionalExtensionPaths: extensionPaths,
 };
-const conversation = new PiConversation(async () => {
-  const resourceLoader = new DefaultResourceLoader(executionResourceOptions);
-  await resourceLoader.reload();
-  const { session } = await createAgentSession({
-    cwd,
-    agentDir,
-    model,
-    modelRuntime,
-    settingsManager,
-    resourceLoader,
-    sessionManager: SessionManager.continueRecent(cwd, sessionDir),
-    tools,
-  });
-  return bindExecutionSession(session, "Pi execution extension failed");
-});
+const workspaceTools = await createWorkspaceTools(cwd, skillPaths);
+const mcpServers = mcpEnabled ? parseMcpServers(process.env.PI_MCP_SERVERS_JSON) : [];
+if (mcpEnabled && mcpServers.length === 0) throw new Error("PI_MCP_ENABLED requires at least one configured server");
+const mcpManager = mcpEnabled ? new McpClientManager(mcpServers) : undefined;
+const mcpTools = mcpManager ? await createMcpTools(mcpManager) : [];
+const memoryTools = memoryEnabled
+  ? (() => {
+      const config = loadMemoryConfig();
+      return createMemoryTools(new EmbeddingClient(config), new KagentMemoryClient(config));
+    })()
+  : [];
+const customTools = [...workspaceTools, ...mcpTools, ...memoryTools];
+const enabledTools = tools
+  ? [...new Set([...tools, ...mcpTools, ...memoryTools].map((tool) => (typeof tool === "string" ? tool : tool.name)))]
+  : undefined;
+const contexts = new ContextRuntimeManager(
+  sessionDir,
+  async (contextDirectory) => {
+    const resourceLoader = new DefaultResourceLoader(executionResourceOptions);
+    await resourceLoader.reload();
+    const { session } = await createAgentSession({
+      cwd,
+      agentDir,
+      model,
+      modelRuntime,
+      settingsManager,
+      resourceLoader,
+      sessionManager: SessionManager.continueRecent(cwd, contextDirectory),
+      tools: enabledTools,
+      customTools,
+    });
+    return bindExecutionSession(session, "Pi execution extension failed");
+  },
+  { maxConcurrency, queueTimeoutMs, idleMs: contextIdleMs },
+);
 const loader = new DefaultResourceLoader({
   ...resourceOptions,
   extensionFactories: [
-    createA2AExtension(conversation, {
+    createA2AExtension(contexts, {
       grpcAddress: process.env.PI_GRPC_ADDRESS ?? "127.0.0.1:8080",
       healthHost: process.env.PI_HEALTH_HOST ?? "127.0.0.1",
       healthPort,
       httpHost: process.env.PI_HTTP_HOST,
       httpPort,
       expandPromptTemplates,
+      identity,
       card: agentCard(process.env.KAGENT_AGENT_CARD_JSON),
     }),
   ],
@@ -138,6 +185,7 @@ async function shutdown() {
   timeout.unref();
   try {
     await lifecycle.close();
+    await mcpManager?.close();
     process.exitCode = lifecycle.hasFailed() ? 1 : 0;
   } finally {
     clearTimeout(timeout);

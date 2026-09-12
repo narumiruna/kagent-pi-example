@@ -1,0 +1,11 @@
+# Apply only after a verified logical/PVC backup. PostgreSQL major version 18
+# matches the original bundled kagent 0.10.1 database.
+database:
+  postgres:
+    vectorEnabled: true
+    bundled:
+      image:
+        registry: docker.io
+        repository: pgvector
+        name: pgvector
+        tag: pg18-trixie@sha256:78bf48b801e792f99e3ac62b5036fd3876e9be48afda16c1e331af1c75ceb2ff

@@ -1,10 +1,14 @@
 import type { ExtensionFactory } from "@earendil-works/pi-coding-agent";
+import type { ContextSessionProvider } from "../src/context-runtime-manager.js";
 import type { PiSession } from "../src/executor.js";
 import { type ServerOptions, startServer } from "../src/server.js";
 
 // The SDK host supplies its durable conversation rather than a second pi process.
 // Factories may load without a session, so sockets belong in session_start.
-export function createA2AExtension(conversation: PiSession, options: ServerOptions): ExtensionFactory {
+export function createA2AExtension(
+  conversation: PiSession | ContextSessionProvider,
+  options: ServerOptions,
+): ExtensionFactory {
   return (pi) => {
     let server: ReturnType<typeof startServer> | undefined;
     pi.on("session_start", async () => {

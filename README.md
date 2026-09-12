@@ -6,9 +6,11 @@ A TypeScript BYO runtime using pi's SDK and an A2A pi extension. It supports bot
 flowchart LR
     Gateway[kagent A2A gateway] -->|A2A v1 gRPC :80| Extension[pi A2A extension]
     Extension --> SDK[pi SDK session]
-    SDK --> Tools[read / write / edit / bash / grep / find / ls]
+    SDK --> Tools[workspace tools / sandboxed bash]
+    SDK --> MCP[allowlisted MCP tools]
+    SDK --> Memory[user-scoped kagent Memory]
     SDK --> Model[Model provider]
-    SDK --> Data[DurableDir /data]
+    SDK --> Data[context sessions /data]
 ```
 
 ## Layout
@@ -19,11 +21,14 @@ flowchart LR
 - `src/request-handler.ts`: adapts kagent-preallocated task IDs to the upstream JS request handler.
 - `src/executor.ts`: maps pi execution to upstream A2A tasks, status updates, artifacts, and cancellation.
 - `src/conversation.ts`: opens a fresh execution session from durable pi history for each prompt.
+- `src/context-runtime-manager.ts`: hashes A2A context IDs, manages durable per-context sessions, locks, queueing, and idle eviction.
+- `src/security/` and `src/tools/`: canonical workspace path policy and Bubblewrap-backed shell tools.
+- `src/integrations/`: optional MCP, trusted request identity, embedding, and kagent Memory adapters.
 - `src/session-lifecycle.ts`: binds headless extensions and guarantees idempotent shutdown/disposal.
 - `src/runtime-config.ts`: validates JSON lists, trusted paths, booleans, and network ports.
 - `skills/`: reviewed, image-baked Agent Skills available to execution sessions.
 
-The extension is an SDK-injected factory, not a standalone `pi -e` extension. An in-memory pi host session owns the extension lifecycle; it never prompts the model. Requests use a separate execution session, await `session.prompt()` including retries, then dispose it. Each execution reopens the same durable conversation. This matters because restoring a Substrate golden process does not rerun `index.ts`: caching execution history in that process would retain stale context after `/data` changes.
+The extension is an SDK-injected factory, not a standalone `pi -e` extension. An in-memory pi host session owns the extension lifecycle; it never prompts the model. Each A2A context maps to `/data/sessions/contexts/<sha256(contextId)>`; requests reopen and dispose that context's execution session around `session.prompt()`. Contexts have independent locks, bounded global concurrency, and idle in-memory eviction. This also avoids retaining stale history after a Substrate restore changes `/data`.
 
 There is no second pi process, stdin RPC bridge, TUI, or dependency on UI APIs. Importing the extension does not open sockets.
 
@@ -44,7 +49,7 @@ npm test
 PI_CODING_AGENT_DIR="$PWD/.pi/agent" npm run dev
 ```
 
-Local defaults bind gRPC to `127.0.0.1:8080` and readiness to `127.0.0.1:8081/readyz`; the HTTP A2A transport is disabled unless `PI_HTTP_PORT` is set. The workspace and pi session live in `.data/`, not your repository checkout. Each request resumes the most recent pi session in that directory, including after a process restart. `PI_CODING_AGENT_DIR` may point pi's credential and model-cache lookup at another directory without moving the workspace or sessions.
+Local defaults bind gRPC to `127.0.0.1:8080` and readiness to `127.0.0.1:8081/readyz`; the HTTP A2A transport is disabled unless `PI_HTTP_PORT` is set. The workspace and context-scoped pi sessions live in `.data/`, not your repository checkout. `PI_CODING_AGENT_DIR` may point pi's credential and model-cache lookup at another directory without moving the workspace or sessions. Bubblewrap must be installed for the `bash` tool; it fails closed when unavailable.
 
 `npm run check` runs **Biome check and TypeScript typecheck**. `npm run format` uses **Biome format**. `npm run build && npm start` runs the compiled package.
 
@@ -70,7 +75,7 @@ kubectl -n kagent wait --for=condition=Ready agent/pi-agent --timeout=5m
 kagent -n kagent invoke --agent pi-agent --task '只回覆 OK，不要使用工具。'
 ```
 
-This mode serves the v0.3 agent card and JSON-RPC on port 8080. Because a legacy Deployment is one durable pi runtime rather than one Actor per instance, all legacy UI/CLI context IDs are normalized to the shared `legacy-default` conversation.
+This mode serves the v0.3 agent card and JSON-RPC on port 8080. Valid legacy context IDs are preserved and receive independent durable Pi histories. Very old requests without a context ID are isolated by task/message ID instead of entering a shared fallback. The manifest uses separate state and workspace PVCs, runs as UID 10001, drops capabilities, and mounts the root filesystem read-only. Before upgrading a PVC created by the older root image, back it up and change its existing files to UID/GID 10001 (for example, from the still-running old Pod: `chown -R 10001:10001 /data`).
 
 ## Deploy with BYO Harness
 
@@ -111,7 +116,19 @@ Requires kagent with the v1alpha3 BYO compiler, Substrate, a same-namespace Work
      --task 'Create hello.txt containing hello.'
    ```
 
-The container serves A2A gRPC on port **80**, readiness on **8081**, and keeps workspace, pi conversation, and pi configuration under **`/data`**. The ModelConfig declares `chatgpt.com` as the model destination for compiled egress; OpenAI Codex OAuth token refresh also requires `auth.openai.com`, which must be allowed by the target compiler/egress policy. This sample does not declare destinations for arbitrary network commands run by the model.
+The container serves A2A gRPC on port **80**, readiness on **8081**, and keeps context histories and pi configuration under **`/data`**. `PI_WORKSPACE_DIR` selects the tool-visible workspace. The ModelConfig declares `chatgpt.com` as the model destination for compiled egress; OpenAI Codex OAuth token refresh also requires `auth.openai.com`. Bash always has a private PID/proc namespace, an empty environment, and no network namespace access.
+
+## Optional MCP and Memory
+
+`PI_MCP_SERVERS_JSON` is an array such as:
+
+```json
+[{"id":"cluster","transport":"streamable-http","url":"https://mcp.kagent.svc/mcp","allowedTools":["get_*","list_*"],"timeoutMs":15000,"headerEnv":{"authorization":"PI_MCP_CLUSTER_AUTH"}}]
+```
+
+Only matched discovered tools are registered, with names like `mcp_cluster_get_pods`. Values named by `headerEnv` must be injected from Secrets. Add each destination to the Agent's egress policy; Bash remains offline.
+
+Memory requires kagent's vector migration first. Back up PostgreSQL, then apply `kagent-pgvector-values.yaml` with the same kagent 0.10.1 chart (for example, `helm upgrade kagent oci://ghcr.io/kagent-dev/kagent/helm/kagent --version 0.10.1 -n kagent --reuse-values -f kagent-pgvector-values.yaml`). Verify both `pg_extension.extname='vector'` and `to_regclass('public.memory')` before testing the UI. Configure an independent embedding Secret/model that returns exactly 768 dimensions, the internal Memory URL, canonical agent name, and trusted user identity. No embedding credential is derived from Codex OAuth. Both integrations remain disabled in checked-in deployments until their endpoint/Secret settings are supplied.
 
 ## Configuration
 
@@ -125,7 +142,19 @@ The container serves A2A gRPC on port **80**, readiness on **8081**, and keeps w
 | `PI_EXTENSION_PATHS_JSON` | `[]` | JSON array of absolute, administrator-trusted Pi extensions that may register custom tools |
 | `PI_TOOLS_JSON` | SDK defaults | JSON tool-name allowlist; deployment enables `read`, `write`, `edit`, `bash`, `grep`, `find`, and `ls` |
 | `PI_EXPAND_PROMPT_TEMPLATES` | `false` | Enable trusted `/skill:name`, prompt-template, and extension-command expansion |
-| `PI_DATA_DIR` | `.data` | Private workspace and session root; also contains the default `agent/` directory; container uses `/data` |
+| `PI_DATA_DIR` | `.data` | Private session/state root; also contains the default `agent/` directory; container uses `/data` |
+| `PI_WORKSPACE_DIR` | `<PI_DATA_DIR>/workspace` | Only writable filesystem root exposed to local tools; legacy deployment mounts a separate PVC at `/workspace` |
+| `PI_MAX_CONCURRENCY` | `2` | Maximum simultaneously executing contexts |
+| `PI_QUEUE_TIMEOUT_MS` | `30000` | Global concurrency queue deadline |
+| `PI_CONTEXT_IDLE_MS` | `900000` | Idle in-memory context-entry eviction period; durable JSONL remains |
+| `PI_MCP_ENABLED` | `false` | Enable explicitly configured MCP adapters |
+| `PI_MCP_SERVERS_JSON` | `[]` | Server routing, transport, tool allowlists, timeout, and header-to-`PI_MCP_*` environment mappings; never inline credentials |
+| `PI_MEMORY_ENABLED` | `false` | Enable `load_memory` and `save_memory`; requires vector-ready kagent and embedding settings |
+| `PI_MEMORY_URL` / `PI_MEMORY_AGENT_NAME` | Unset | Internal kagent API and canonical namespace/name key |
+| `PI_EMBEDDING_BASE_URL` / `PI_EMBEDDING_MODEL` | Unset | OpenAI-compatible 768-dimensional embedding endpoint/model |
+| `PI_EMBEDDING_API_KEY` | Unset | Secret embedding credential, independent from Codex OAuth |
+| `PI_TRUSTED_USER_HEADER` | Unset | Trusted gateway user identity header; legacy manifest uses `X-User-Id` with controller-only ingress |
+| `PI_IDENTITY_TOKEN_HEADER` / `PI_IDENTITY_SHARED_SECRET` | Unset | Optional paired header/shared-Secret verification when the gateway can inject a token |
 | `PI_CODING_AGENT_DIR` | `<PI_DATA_DIR>/agent` | pi agent directory used for `auth.json`, `settings.json`, and `models-store.json`; set to `$PWD/.pi/agent` to reuse local pi configuration |
 | `PI_GRPC_ADDRESS` | `127.0.0.1:8080` | gRPC bind address; Harness uses `0.0.0.0:80`, legacy deployment uses internal port 8082 |
 | `PI_HTTP_HOST` | `127.0.0.1` | Optional JSON-RPC bind host; legacy deployment uses `0.0.0.0` |
@@ -134,14 +163,15 @@ The container serves A2A gRPC on port **80**, readiness on **8081**, and keeps w
 | `PI_HEALTH_PORT` | `8081` | Local readiness port; keep 8081 in Substrate |
 | `KAGENT_AGENT_CARD_JSON` | Minimal sample card | Generated card supplied by kagent |
 
-The sample deliberately **ignores `KAGENT_CONFIG_JSON`**. AgentTemplate prompts, MCP tools, skills, plugins, and model settings are not automatically translated into pi configuration. pi uses its built-in coding prompt/tools, global settings from `PI_CODING_AGENT_DIR`, and explicit provider environment overrides. Writable global/project extensions, skills, prompt templates, themes, project settings, and context files remain disabled. Only absolute paths explicitly selected through `PI_SKILL_PATHS_JSON` and `PI_EXTENSION_PATHS_JSON` are loaded; deployments enable command expansion for those reviewed resources. kagent MCP tools still require an explicit Pi tool adapter.
+The runtime deliberately **ignores `KAGENT_CONFIG_JSON`**. AgentTemplate resources are not automatically translated into Pi configuration. Writable global/project extensions, skills, prompt templates, themes, settings, and context files remain disabled. Only administrator-selected absolute paths are loaded. MCP uses the pinned official SDK, explicit server/tool allowlists, scoped `PI_MCP_*` Secret environment variables, deadlines, cancellation, text/JSON-only results, and output truncation. MCP/Memory are independent feature flags and default off.
 
 ## Semantics and limits
 
-- One Actor serves one context and one active prompt. Overlapping requests or another context are rejected rather than becoming steering messages. A fresh runtime can accept a new context ID while resuming checkpointed pi history, as required for forks.
+- A context permits one active prompt; different contexts run up to the configured global limit. Extra contexts queue with a deadline. Context IDs select conversation history and verified user IDs independently select Memory tenancy.
 - Text input only. Streaming publishes working status, tool names, and completed assistant-message artifacts, **not token-by-token deltas**. Thinking and raw tool arguments/results are not published.
 - Completion waits for `session.prompt()` to settle, not the first `agent_end`, so retries do not prematurely complete an A2A task. Provider failures and truncation become failed tasks; cancel calls abort pi.
 - kagent owns durable public A2A task history. The upstream in-memory TaskStore is only runtime-local state, is not checkpointed separately, and grows until runtime replacement. The private pi JSONL conversation is the durable model context, not a new public session API.
 - No HITL/interrupted-task continuation, reference tasks, push notifications, API-key passthrough from invocation headers, or guaranteed replay of an interrupted tool side effect. Do not use automatic retry to assume exactly-once execution of shell commands.
-- The runtime has **no public authentication layer**; kagent's gateway owns authorization. Local ports are loopback-only. pi tools execute with the container's privileges and can read its credentials. Use trusted callers, scoped credentials, and Substrate isolation; do not mount a developer home directory or Docker socket.
+- The runtime remains private behind kagent. The legacy manifest trusts `X-User-Id` only with a NetworkPolicy restricting ingress to the authenticated controller. Other deployments should pair the user header with a timing-safe shared-Secret header. Missing trusted identity disables Memory rather than selecting a shared user.
+- File tools canonicalize existing paths and validate the nearest existing parent for new paths; writes are workspace-only and trusted skills are read-only. The separate workspace PVC prevents hard-link access to `/data/agent` and `/data/sessions`. Bash uses Bubblewrap and cannot see those paths.
 - Tests use real local gRPC and a real pi SDK session with a mocked model endpoint. **Live model access, Substrate preparation, Node/V8 checkpoint/restore, suspend/resume, and fork are not cluster-validated by this sample's tests.** Bookworm matches the existing BYO glibc baseline but does not prove Node checkpoint compatibility.
